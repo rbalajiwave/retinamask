@@ -56,8 +56,8 @@ ARG FORCE_CUDA="1"
 ENV FORCE_CUDA=${FORCE_CUDA}
 
 
-COPY . /retinamask
-RUN pwd \
-ls
-RUN cd retinamask/maskrcnn-benchmark \
- && python setup.py build develop
+RUN git clone https://github.com/rbalajiwave/retinamask.git \
+ && cd maskrcnn-benchmark \
+&& python setup.py build develop
+
+WORKDIR /retinamask
