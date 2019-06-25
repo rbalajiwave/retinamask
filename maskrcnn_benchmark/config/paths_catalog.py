@@ -37,6 +37,10 @@ class DatasetCatalog(object):
             "coco/val2014",
             "coco/annotations/instances_valminusminival2014.json",
         ),
+        "BDD100k_Segmentation" : ( 
+            "/home/bdd100k/seg/images/train",
+            "/home/bdd100k/annotations",
+        )
     }
 
     @staticmethod
@@ -51,6 +55,17 @@ class DatasetCatalog(object):
             return dict(
                 factory="COCODataset",
                 args=args,
+            )
+        if "BDD100k" in name:
+            data_dir = DatasetCatalog.DATA_DIR
+            attrs = DatasetCatalog.DATASETS[name]
+            args = dict(
+                root=os.path.join(data_dir, attrs[0]),
+                ann_file=os.path.join(data_dir, attrs[1]),
+            )
+            return dict(
+                factory="BDD100kDataset",
+                args = args,
             )
         raise RuntimeError("Dataset not available: {}".format(name))
 

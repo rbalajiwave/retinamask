@@ -1,13 +1,13 @@
-import numpy as np
+import math
 import torch
 import torch.nn.functional as F
 from torch import nn
 
+from .inference import  make_retinanet_postprocessor
+from .loss import make_retinanet_loss_evaluator
+from ..anchor_generator import make_anchor_generator_retinanet
+
 from maskrcnn_benchmark.modeling.box_coder import BoxCoder
-from .retinanet_loss import make_retinanet_loss_evaluator
-from .anchor_generator import make_anchor_generator_retinanet
-from .retinanet_infer import  make_retinanet_postprocessor
-from .retinanet_detail_infer import  make_retinanet_detail_postprocessor
 
 
 class RetinaNetHead(torch.nn.Module):
@@ -15,7 +15,7 @@ class RetinaNetHead(torch.nn.Module):
     Adds a RetinNet head with classification and regression heads
     """
 
-    def __init__(self, cfg):
+    def __init__(self, cfg, in_channels):
         """
         Arguments:
             in_channels (int): number of channels of the input feature
@@ -23,14 +23,13 @@ class RetinaNetHead(torch.nn.Module):
         """
         super(RetinaNetHead, self).__init__()
         # TODO: Implement the sigmoid version first.
-        num_classes = cfg.RETINANET.NUM_CLASSES - 1
-        in_channels = cfg.MODEL.BACKBONE.OUT_CHANNELS
-        num_anchors = len(cfg.RETINANET.ASPECT_RATIOS) \
-                        * cfg.RETINANET.SCALES_PER_OCTAVE
+        num_classes = cfg.MODEL.RETINANET.NUM_CLASSES - 1
+        num_anchors = len(cfg.MODEL.RETINANET.ASPECT_RATIOS) \
+                        * cfg.MODEL.RETINANET.SCALES_PER_OCTAVE
 
         cls_tower = []
         bbox_tower = []
-        for i in range(cfg.RETINANET.NUM_CONVS):
+        for i in range(cfg.MODEL.RETINANET.NUM_CONVS):
             cls_tower.append(
                 nn.Conv2d(
                     in_channels,
@@ -40,9 +39,6 @@ class RetinaNetHead(torch.nn.Module):
                     padding=1
                 )
             )
-            if cfg.MODEL.USE_GN:
-                cls_tower.append(nn.GroupNorm(32, in_channels))
-
             cls_tower.append(nn.ReLU())
             bbox_tower.append(
                 nn.Conv2d(
@@ -53,9 +49,6 @@ class RetinaNetHead(torch.nn.Module):
                     padding=1
                 )
             )
-            if cfg.MODEL.USE_GN:
-                bbox_tower.append(nn.GroupNorm(32, in_channels))
-
             bbox_tower.append(nn.ReLU())
 
         self.add_module('cls_tower', nn.Sequential(*cls_tower))
@@ -76,13 +69,11 @@ class RetinaNetHead(torch.nn.Module):
                 if isinstance(l, nn.Conv2d):
                     torch.nn.init.normal_(l.weight, std=0.01)
                     torch.nn.init.constant_(l.bias, 0)
-                if isinstance(l, nn.GroupNorm):
-                    torch.nn.init.constant_(l.weight, 1.0)
-                    torch.nn.init.constant_(l.bias, 0)
+
 
         # retinanet_bias_init
-        prior_prob = cfg.RETINANET.PRIOR_PROB
-        bias_value = -np.log((1 - prior_prob) / prior_prob)
+        prior_prob = cfg.MODEL.RETINANET.PRIOR_PROB
+        bias_value = -math.log((1 - prior_prob) / prior_prob)
         torch.nn.init.constant_(self.cls_logits.bias, bias_value)
 
     def forward(self, x):
@@ -96,36 +87,26 @@ class RetinaNetHead(torch.nn.Module):
 
 class RetinaNetModule(torch.nn.Module):
     """
-    Module for RetinaNet computation. Takes feature maps from the backbone and RPN
-    proposals and losses.
+    Module for RetinaNet computation. Takes feature maps from the backbone and
+    RetinaNet outputs and losses. Only Test on FPN now.
     """
 
-    def __init__(self, cfg):
+    def __init__(self, cfg, in_channels):
         super(RetinaNetModule, self).__init__()
 
         self.cfg = cfg.clone()
 
         anchor_generator = make_anchor_generator_retinanet(cfg)
-        head = RetinaNetHead(cfg)
+        head = RetinaNetHead(cfg, in_channels)
         box_coder = BoxCoder(weights=(10., 10., 5., 5.))
 
-        if self.cfg.MODEL.SPARSE_MASK_ON:
-            box_selector_test = make_retinanet_detail_postprocessor(
-                cfg, 100, box_coder)
-        else:
-            box_selector_test = make_retinanet_postprocessor(
-                cfg, 100, box_coder)
-        box_selector_train = None
-        if self.cfg.MODEL.MASK_ON or self.cfg.MODEL.SPARSE_MASK_ON:
-            box_selector_train = make_retinanet_postprocessor(
-                cfg, 100, box_coder)
+        box_selector_test = make_retinanet_postprocessor(cfg, box_coder, is_train=False)
 
         loss_evaluator = make_retinanet_loss_evaluator(cfg, box_coder)
 
         self.anchor_generator = anchor_generator
         self.head = head
         self.box_selector_test = box_selector_test
-        self.box_selector_train = box_selector_train
         self.loss_evaluator = loss_evaluator
 
     def forward(self, images, features, targets=None):
@@ -160,30 +141,12 @@ class RetinaNetModule(torch.nn.Module):
             "loss_retina_cls": loss_box_cls,
             "loss_retina_reg": loss_box_reg,
         }
-        detections = None
-        if self.cfg.MODEL.MASK_ON or self.cfg.MODEL.SPARSE_MASK_ON:
-            with torch.no_grad():
-                detections = self.box_selector_train(
-                    anchors, box_cls, box_regression
-                )
-
-        return (anchors, detections), losses
+        return anchors, losses
 
     def _forward_test(self, anchors, box_cls, box_regression):
         boxes = self.box_selector_test(anchors, box_cls, box_regression)
-        '''
-        if self.cfg.MODEL.RPN_ONLY:
-            # For end-to-end models, the RPN proposals are an intermediate state
-            # and don't bother to sort them in decreasing score order. For RPN-only
-            # models, the proposals are the final output and we return them in
-            # high-to-low confidence order.
-            inds = [
-                box.get_field("objectness").sort(descending=True)[1] for box in boxes
-            ]
-            boxes = [box[ind] for box, ind in zip(boxes, inds)]
-        '''
-        return (anchors, boxes), {}
+        return boxes, {}
 
 
-def build_retinanet(cfg):
-    return RetinaNetModule(cfg)
+def build_retinanet(cfg, in_channels):
+    return RetinaNetModule(cfg, in_channels)

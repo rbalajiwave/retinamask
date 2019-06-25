@@ -58,7 +58,7 @@ class AnchorGenerator(nn.Module):
             cell_anchors = [
                 generate_anchors(
                     anchor_stride,
-                    size if type(size) is tuple else (size,),
+                    size if isinstance(size, (tuple, list)) else (size,),
                     aspect_ratios
                 ).float()
                 for anchor_stride, size in zip(anchor_strides, sizes)
@@ -110,7 +110,6 @@ class AnchorGenerator(nn.Module):
         boxlist.add_field("visibility", inds_inside)
 
     def forward(self, image_list, feature_maps):
-        grid_height, grid_width = feature_maps[0].shape[-2:]
         grid_sizes = [feature_map.shape[-2:] for feature_map in feature_maps]
         anchors_over_all_feature_maps = self.grid_anchors(grid_sizes)
         anchors = []
@@ -145,12 +144,12 @@ def make_anchor_generator(config):
 
 
 def make_anchor_generator_retinanet(config):
-    anchor_sizes = config.RETINANET.ANCHOR_SIZES
-    aspect_ratios = config.RETINANET.ASPECT_RATIOS
-    anchor_strides = config.RETINANET.ANCHOR_STRIDES
-    straddle_thresh = config.RETINANET.STRADDLE_THRESH
-    octave = config.RETINANET.OCTAVE
-    scales_per_octave = config.RETINANET.SCALES_PER_OCTAVE
+    anchor_sizes = config.MODEL.RETINANET.ANCHOR_SIZES
+    aspect_ratios = config.MODEL.RETINANET.ASPECT_RATIOS
+    anchor_strides = config.MODEL.RETINANET.ANCHOR_STRIDES
+    straddle_thresh = config.MODEL.RETINANET.STRADDLE_THRESH
+    octave = config.MODEL.RETINANET.OCTAVE
+    scales_per_octave = config.MODEL.RETINANET.SCALES_PER_OCTAVE
 
     assert len(anchor_strides) == len(anchor_sizes), "Only support FPN now"
     new_anchor_sizes = []
