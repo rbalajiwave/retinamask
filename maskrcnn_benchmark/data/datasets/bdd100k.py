@@ -14,7 +14,7 @@ from maskrcnn_benchmark.structures.segmentation_mask import BinaryMaskList
 
 
 
-class BDD100Dataset(torch.utils.data.Dataset):
+class BDD100kDataset(torch.utils.data.Dataset):
 #class BDD100Dataset():
 	"""
 		A generic Dataset for the maskrcnn_benchmark must have the following
